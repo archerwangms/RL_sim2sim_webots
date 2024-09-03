@@ -3,6 +3,7 @@ import numpy as np
 import torch 
 import torch.nn as nn
 from torch.distributions import Normal
+from torch.utils.tensorboard import SummaryWriter
 
 class robot_config:
     class obs_scales:
@@ -232,6 +233,7 @@ class RL_controller(nn.Module):
         self.obs_buf = torch.zeros(num_nn_input,dtype=torch.float)    
         self.commands_scale = torch.tensor([self.obs_scale.lin_vel, self.obs_scale.lin_vel, 
                                             self.obs_scale.ang_vel], requires_grad=False,)
+        self.iteration = 0
 
         activation = get_activation(activation)
         mlp_input_dim_a = num_nn_input
@@ -248,11 +250,15 @@ class RL_controller(nn.Module):
                 actor_layers.append(activation)
         self.actor = nn.Sequential(*actor_layers)        
         print(f"Actor MLP: {self.actor}")
+        #log data
+        self.log_dir = "../log/A1"
+        self.writer = SummaryWriter(log_dir=self.log_dir,flush_secs=10)
         # Action noise
         self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
         self.distribution = None
         # disable args validation for speedup
         Normal.set_default_validate_args = False
+
 
     def Compute_obs(self,interface:webot_interface):
         obs_buf = torch.cat(( interface.base_lin_vel * self.obs_scale.lin_vel,
@@ -283,7 +289,11 @@ class RL_controller(nn.Module):
         actions_mean = self.actor(observations)
         return actions_mean
     
+    def log_data(self,interface:webot_interface):
+        self.writer.add_scalar(f"body_velo_x",interface.base_lin_vel[0],self.iteration)
+
     def step(self,interface:webot_interface):
+        self.iteration += 1
         for i in range(self.decimation):
             interface.get_keyboard_input()
             interface.get_observersion()
@@ -297,6 +307,7 @@ class RL_controller(nn.Module):
             wb_torque = interface.compute_torque(interface.actions,self.action_scales.action_scale)
             interface.send_torque(wb_torque)
             interface.a1_supervisor_class.step(interface.sim_time_step)
+        self.log_data(interface)
 
 def get_activation(act_name):
     if act_name == "elu":
